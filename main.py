@@ -43,19 +43,18 @@ def calculate_packing(req: PackRequest):
 
     # Para forzar un paquete cúbico compacto, restringimos el piso virtual.
     # El lado de un cubo ideal es la raíz cúbica del volumen total (+20% de holgura).
-    ideal_side = max(max_item_dim, math.pow(total_vol * 1.2, 1/3))
-
     best_packer = None
     min_bounding_vol = float('inf')
 
-    # Búsqueda exhaustiva: Probamos múltiples proporciones de piso para encontrar el volumen MÁS PEQUEÑO absoluto.
-    multipliers = [1.0, 1.25, 1.5, 2.0, 3.0]
-    
-    for w_mult in multipliers:
-        for d_mult in multipliers:
-            test_w = ideal_side * w_mult
-            test_d = ideal_side * d_mult
-            
+    min_side = int(max_item_dim)
+    # Rango de prueba para el piso. Aseguramos al menos un buen margen.
+    max_side = int(max(min_side * 3, math.pow(total_vol * 4, 1/3))) 
+    step = max(5, (max_side - min_side) // 12)
+
+    # 1) Prueba estricta: Simulamos cajas con PAREDES FISICAS para forzar la densidad
+    # y evitar formas de "L" o piezas desparramadas.
+    for test_w in range(min_side, max_side + step, step):
+        for test_d in range(min_side, max_side + step, step):
             packer = Packer()
             packer.add_bin(Bin('Virtual', test_w, test_d, 999999.0, 999999.0))
 
@@ -66,7 +65,6 @@ def calculate_packing(req: PackRequest):
             packer.pack()
             
             if len(packer.bins[0].items) == total_items:
-                # Calcular la bounding box real de esta simulación
                 m_l = m_w = m_h = 0
                 for item in packer.bins[0].items:
                     x, y, z = item.position
@@ -77,10 +75,20 @@ def calculate_packing(req: PackRequest):
                 
                 real_vol = m_l * m_w * m_h
                 
-                # Si este arreglo genera un volumen total menor, nos lo quedamos
                 if real_vol < min_bounding_vol:
                     min_bounding_vol = real_vol
                     best_packer = packer
+
+    # 2) Fallback: Si ningún contenedor estricto funcionó (combinación muy rara)
+    if not best_packer:
+        packer = Packer()
+        packer.add_bin(Bin('Fallback', 999999.0, 999999.0, 999999.0, 999999.0))
+        for it in req.items:
+            for i in range(it.qty):
+                packer.add_item(Item(f"{it.sku}_{i}", it.l, it.w, it.h, it.weight))
+        packer.pack()
+        if len(packer.bins[0].items) == total_items:
+            best_packer = packer
 
     if not best_packer:
         raise HTTPException(status_code=400, detail="No se pudo empaquetar")
