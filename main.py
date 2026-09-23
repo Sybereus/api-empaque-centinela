@@ -46,25 +46,41 @@ def calculate_packing(req: PackRequest):
     ideal_side = max(max_item_dim, math.pow(total_vol * 1.2, 1/3))
 
     best_packer = None
+    min_bounding_vol = float('inf')
 
-    # Intentamos empacar en bases gradualmente más grandes si no cabe
-    for multiplier in [1.0, 1.2, 1.5, 2.0, 3.0, 10.0]:
-        floor_size = ideal_side * multiplier
-        
-        packer = Packer()
-        # Creamos una caja con "paredes" estrechas pero altura infinita para forzar el apilamiento
-        packer.add_bin(Bin('Virtual-Bin', floor_size, floor_size, 999999.0, 999999.0))
+    # Búsqueda exhaustiva: Probamos múltiples proporciones de piso para encontrar el volumen MÁS PEQUEÑO absoluto.
+    multipliers = [1.0, 1.25, 1.5, 2.0, 3.0]
+    
+    for w_mult in multipliers:
+        for d_mult in multipliers:
+            test_w = ideal_side * w_mult
+            test_d = ideal_side * d_mult
+            
+            packer = Packer()
+            packer.add_bin(Bin('Virtual', test_w, test_d, 999999.0, 999999.0))
 
-        for it in req.items:
-            for i in range(it.qty):
-                packer.add_item(Item(f"{it.sku}_{i}", it.l, it.w, it.h, it.weight))
+            for it in req.items:
+                for i in range(it.qty):
+                    packer.add_item(Item(f"{it.sku}_{i}", it.l, it.w, it.h, it.weight))
 
-        packer.pack()
-        
-        # Si empacó todos los items, este tamaño de base es suficiente
-        if len(packer.bins[0].items) == total_items:
-            best_packer = packer
-            break
+            packer.pack()
+            
+            if len(packer.bins[0].items) == total_items:
+                # Calcular la bounding box real de esta simulación
+                m_l = m_w = m_h = 0
+                for item in packer.bins[0].items:
+                    x, y, z = item.position
+                    l, w, h = item.get_dimension()
+                    if x + l > m_l: m_l = x + l
+                    if y + w > m_w: m_w = y + w
+                    if z + h > m_h: m_h = z + h
+                
+                real_vol = m_l * m_w * m_h
+                
+                # Si este arreglo genera un volumen total menor, nos lo quedamos
+                if real_vol < min_bounding_vol:
+                    min_bounding_vol = real_vol
+                    best_packer = packer
 
     if not best_packer:
         raise HTTPException(status_code=400, detail="No se pudo empaquetar")
