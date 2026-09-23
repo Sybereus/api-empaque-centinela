@@ -3,10 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
 from py3dbp import Packer, Bin, Item
+import math
 
 app = FastAPI(title="WooCommerce 3D Packing API")
 
-# Permitir CORS para que WordPress pueda consultar esta API
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -27,45 +27,56 @@ class ProductItem(BaseModel):
 class PackRequest(BaseModel):
     items: List[ProductItem]
 
+@app.get("/")
+def read_root():
+    return {"status": "API Online", "mensaje": "El motor de empaque 3D en Python esta funcionando correctamente."}
+
 @app.post("/calculate-packing")
 def calculate_packing(req: PackRequest):
-    packer = Packer()
-
-    # Como queremos el volumen mínimo y no tenemos una "caja fija", 
-    # creamos una caja "virtual" lo suficientemente grande
-    # En una implementación más avanzada, se iteraría para reducir esta caja al mínimo absoluto.
-    max_dim = 0
     total_vol = 0
+    max_item_dim = 0
+    total_items = 0
     for it in req.items:
-        max_dim += max(it.l, it.w, it.h) * it.qty
         total_vol += (it.l * it.w * it.h) * it.qty
+        max_item_dim = max(max_item_dim, it.l, it.w, it.h)
+        total_items += it.qty
 
-    # Bin gigante virtual
-    packer.add_bin(Bin('Virtual-Bin', max_dim, max_dim, max_dim, 999999.0))
+    # Para forzar un paquete cúbico compacto, restringimos el piso virtual.
+    # El lado de un cubo ideal es la raíz cúbica del volumen total (+20% de holgura).
+    ideal_side = max(max_item_dim, math.pow(total_vol * 1.2, 1/3))
 
-    for it in req.items:
-        for i in range(it.qty):
-            packer.add_item(Item(f"{it.sku}_{i}", it.l, it.w, it.h, it.weight))
+    best_packer = None
 
-    packer.pack()
+    # Intentamos empacar en bases gradualmente más grandes si no cabe
+    for multiplier in [1.0, 1.2, 1.5, 2.0, 3.0, 10.0]:
+        floor_size = ideal_side * multiplier
+        
+        packer = Packer()
+        # Creamos una caja con "paredes" estrechas pero altura infinita para forzar el apilamiento
+        packer.add_bin(Bin('Virtual-Bin', floor_size, floor_size, 999999.0, 999999.0))
 
-    b = packer.bins[0]
-    
-    if not b.items:
+        for it in req.items:
+            for i in range(it.qty):
+                packer.add_item(Item(f"{it.sku}_{i}", it.l, it.w, it.h, it.weight))
+
+        packer.pack()
+        
+        # Si empacó todos los items, este tamaño de base es suficiente
+        if len(packer.bins[0].items) == total_items:
+            best_packer = packer
+            break
+
+    if not best_packer:
         raise HTTPException(status_code=400, detail="No se pudo empaquetar")
 
+    b = best_packer.bins[0]
     placed_items = []
     max_l, max_w, max_h = 0, 0, 0
 
-    # Extraer coordenadas del motor py3dbp
     for item in b.items:
-        # py3dbp devuelve position (x,y,z) y dimensiones rotadas
         x, y, z = item.position
-        
-        # Las dimensiones actuales según la rotación aplicada por py3dbp
         l, w, h = item.get_dimension()
         
-        # Mapear color
         color = 0x000000
         for req_item in req.items:
             if item.name.startswith(req_item.sku):
@@ -88,12 +99,6 @@ def calculate_packing(req: PackRequest):
         if z + h > max_h: max_h = z + h
 
     return {
-        "bounding_box": {
-            "l": float(max_l),
-            "w": float(max_w),
-            "h": float(max_h)
-        },
+        "bounding_box": {"l": float(max_l), "w": float(max_w), "h": float(max_h)},
         "placed_items": placed_items
     }
-
-# Para correr en local: uvicorn main:app --reload
