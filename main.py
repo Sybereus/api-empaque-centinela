@@ -117,10 +117,10 @@ def calculate_packing(req: PackRequest):
             packer.pack()
             
             if len(packer.bins[0].items) == len(items_to_pack):
-                m_l = m_w = m_h = 0
+                m_l = m_w = m_h = 0.0
                 for item in packer.bins[0].items:
-                    x, y, z = item.position
-                    l, w, h = item.get_dimension()
+                    x, y, z = map(float, item.position)
+                    l, w, h = map(float, item.get_dimension())
                     if x + l > m_l: m_l = x + l
                     if y + w > m_w: m_w = y + w
                     if z + h > m_h: m_h = z + h
@@ -136,12 +136,12 @@ def calculate_packing(req: PackRequest):
 
     # 3. Desempacar los Mega-Bloques de vuelta a cajas individuales para el visor 3D
     placed_items = []
-    max_l = max_w = max_h = 0
+    max_l = max_w = max_h = 0.0
     b = best_packer.bins[0]
     
     for packed_item in b.items:
-        x, y, z = packed_item.position
-        fL, fW, fH = packed_item.get_dimension()
+        x, y, z = map(float, packed_item.position)
+        fL, fW, fH = map(float, packed_item.get_dimension())
         
         blk = next(b for b in items_to_pack if b["id"] == packed_item.name)
         oL, oW, oH = blk["orig_dims"]
